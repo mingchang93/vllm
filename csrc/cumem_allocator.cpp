@@ -134,14 +134,10 @@ static bool probe_fabric_support(unsigned long long device) {
   if (r == CUDA_SUCCESS) {
     cuMemRelease(test_handle);
     fabric_support[device] = 1;
-    std::cerr << "vllm:cumem: device " << device
-              << " fabric handles available (multi-node NVLink)" << std::endl;
     return true;
   }
 
   fabric_support[device] = 2;
-  std::cerr << "vllm:cumem: device " << device
-            << " fabric handles not available, using POSIX fd" << std::endl;
   return false;
 }
 #endif
