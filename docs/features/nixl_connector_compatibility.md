@@ -91,9 +91,7 @@ By default, a **compatibility hash** is checked during handshake. P and D instan
 
 ### KV cache layout
 
-- NixlConnector defaults to **`HND`** layout for optimal transfer performance (non-MLA models).
-- `NHD` layout is supported but does **not** allow heterogeneous TP head splitting.
-- Experimental `HND` ↔ `NHD` permute: enable via `--kv-transfer-config '{"enable_permute_local_kv": true}'`. Not supported with HMA.
+- NixlConnector uses **`HND`** layout for optimal transfer performance (non-MLA models).
 
 ### Quantized KV cache
 

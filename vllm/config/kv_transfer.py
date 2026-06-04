@@ -64,9 +64,6 @@ class KVTransferConfig:
     """The Python module path to dynamically load the KV connector from.
     Only supported in V1."""
 
-    enable_permute_local_kv: bool = False
-    """Experiment feature flag to enable HND to NHD KV Transfer"""
-
     kv_load_failure_policy: Literal["recompute", "fail"] = "fail"
     """Policy for handling KV cache load failures.
     'recompute': reschedule the request to recompute failed blocks

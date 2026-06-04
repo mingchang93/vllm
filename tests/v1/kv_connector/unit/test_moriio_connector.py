@@ -186,7 +186,6 @@ def create_vllm_config(
     block_size: int = 16,
     max_model_len: int = 10000,
     enable_chunked_prefill: bool = True,
-    enable_permute_local_kv: bool = False,
     role="kv_consumer",
     read_mode: bool = False,
 ) -> VllmConfig:
@@ -217,7 +216,6 @@ def create_vllm_config(
     kv_transfer_config = KVTransferConfig(
         kv_connector="MoRIIOConnector",
         kv_role=role,
-        enable_permute_local_kv=enable_permute_local_kv,
         kv_connector_extra_config={"read_mode": read_mode, "backend": "xgmi"},
     )
     return VllmConfig(

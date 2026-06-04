@@ -36,12 +36,7 @@ if [[ -n "$VLLM_SERVE_EXTRA_ARGS" ]]; then
   echo "vLLM serve extra args: $VLLM_SERVE_EXTRA_ARGS"
 fi
 
-DECODER_KV_LAYOUT=${DECODER_KV_LAYOUT:-"HND"} # Default to HND, optional NHD
-if [[ "$DECODER_KV_LAYOUT" == "NHD" ]]; then
-  KV_CONFIG_HETERO_LAYOUT=',"enable_permute_local_kv":"True"'
-else
-  KV_CONFIG_HETERO_LAYOUT=''
-fi
+DECODER_KV_LAYOUT=${DECODER_KV_LAYOUT:-"HND"}
 
 if [[ "$CROSS_LAYERS_BLOCKS" == "True" ]]; then
   KV_EXTRA_CONFIG=',"kv_connector_extra_config":{"enable_cross_layers_blocks": "True"}'
@@ -51,9 +46,9 @@ fi
 
 # Build the kv-transfer-config once
 if [[ "$KV_BUFFER_DEVICE" == "cuda" ]]; then
-  KV_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_both"'${KV_CONFIG_HETERO_LAYOUT}${KV_EXTRA_CONFIG}'}'
+  KV_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_both"'${KV_EXTRA_CONFIG}'}'
 else
-  KV_CONFIG="{\"kv_connector\":\"NixlConnector\",\"kv_role\":\"kv_both\",\"kv_buffer_device\":\"$KV_BUFFER_DEVICE\""${KV_CONFIG_HETERO_LAYOUT}${KV_EXTRA_CONFIG}"}"
+  KV_CONFIG="{\"kv_connector\":\"NixlConnector\",\"kv_role\":\"kv_both\",\"kv_buffer_device\":\"$KV_BUFFER_DEVICE\""${KV_EXTRA_CONFIG}"}"
 fi
 
 # Models to run

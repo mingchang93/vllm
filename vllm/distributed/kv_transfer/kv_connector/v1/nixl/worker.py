@@ -24,9 +24,7 @@ from vllm.distributed.kv_transfer.kv_connector.utils import (
     EngineTransferInfo,
     TransferTopology,
     get_current_attn_backends,
-    kv_postprocess_blksize_and_layout_on_receive,
     kv_postprocess_blksize_on_receive,
-    kv_postprocess_layout_on_receive,
 )
 from vllm.distributed.kv_transfer.kv_connector.v1.base import CopyBlocksOp
 from vllm.distributed.kv_transfer.kv_connector.v1.metrics import KVConnectorStats
@@ -300,7 +298,6 @@ class NixlConnectorWorker:
         self.world_size = get_tensor_model_parallel_world_size()
 
         self.num_blocks = kv_cache_config.num_blocks
-        self.enable_permute_local_kv = False
         self.enable_heterogeneous_attn_post_process = False
 
         # KV Caches and nixl tracking data.
@@ -601,25 +598,6 @@ class NixlConnectorWorker:
                 kv_shape = kv_cache.shape
                 kv_dtype = kv_cache.dtype
                 permute_shape = False
-                if (
-                    self.kv_cache_layout == "NHD"
-                    and self.vllm_config.kv_transfer_config is not None
-                    and self.vllm_config.kv_transfer_config.enable_permute_local_kv
-                ):
-                    logger.info_once(
-                        "'enable_permute_local_kv' flag is enabled while "
-                        "device KV Layout is NHD. Init host buffer with"
-                        " HND to better support Decode/Prefill TP_ratio > 1."
-                    )
-                    # Since NHD will not support Decode/Prefill TP_ratio > 1,
-                    # we can leverage host_buffer for permute
-                    self.host_buffer_kv_cache_layout = "HND"
-                    kv_shape = (
-                        tuple(kv_shape[i] for i in inv_order)
-                        if not self.use_mla
-                        else kv_shape
-                    )
-                    permute_shape = not self.use_mla
 
                 xfer_buffers[layer_name] = torch.empty(
                     kv_shape, dtype=kv_dtype, device="cpu"
@@ -1463,24 +1441,10 @@ class NixlConnectorWorker:
             else self.host_buffer_kv_cache_layout
         )
         if not self.use_mla and nixl_agent_meta.kv_cache_layout != kv_cache_layout:
-            if (
-                self.kv_transfer_config.enable_permute_local_kv
-                and nixl_agent_meta.kv_cache_layout == "HND"
-            ):
-                logger.info(
-                    "Remote is HND and local is NHD, enabled additional permute "
-                    "on local device KV."
-                )
-                assert not self._is_hma_required, (
-                    "HMA does not support block size post processing"
-                )
-                self.enable_permute_local_kv = True
-            else:
-                raise RuntimeError(
-                    "Heterogeneous TP expects same kv_cache_layout. "
-                    "Or enable experimental feature to use HND to NHD support by "
-                    "setting 'enable_permute_local_kv'=True in --kv-transfer-config."
-                )
+            raise RuntimeError(
+                f"KV cache layout mismatch: remote={nixl_agent_meta.kv_cache_layout}, "
+                f"local={kv_cache_layout}. Both sides must use the same layout."
+            )
         # if remote_agent used attn is not same as local,
         # hint heterogenuous attn post process
         if (
@@ -1505,7 +1469,6 @@ class NixlConnectorWorker:
             and not self.use_mla
             and not self.transfer_topo.is_kv_replicated(remote_engine_id)
             and kv_cache_layout != "HND"
-            and not self.enable_permute_local_kv
         ):
             raise RuntimeError(
                 "Heterogeneous TP head-dimension splitting requires contiguous heads. "
@@ -1631,19 +1594,7 @@ class NixlConnectorWorker:
             return
         assert block_size_ratio >= 1, "Only nP < nD supported currently."
         assert self.transfer_topo is not None
-        if self.enable_permute_local_kv and block_size_ratio > 1:
-            logger.debug(
-                "Post-processing device kv cache on receive by converting "
-                "block_size with %sx bigger and permuting layout from HND"
-                " to NHD.",
-                block_size_ratio,
-            )
-        elif self.enable_permute_local_kv:
-            logger.debug(
-                "Post-processing device kv cache on receive by permuting layout"
-                "from HND to NHD."
-            )
-        else:
+        if block_size_ratio > 1:
             logger.debug(
                 "Post-processing device kv cache on receive by converting "
                 "block_size with %sx bigger.",
@@ -1654,13 +1605,7 @@ class NixlConnectorWorker:
             indices = torch.tensor(block_ids, device=self.device_type, dtype=torch.long)
 
             for cache in self.device_kv_caches.values():
-                if self.enable_permute_local_kv and block_size_ratio > 1:
-                    kv_postprocess_blksize_and_layout_on_receive(
-                        cache, indices, block_size_ratio
-                    )
-                elif self.enable_permute_local_kv:
-                    kv_postprocess_layout_on_receive(cache, indices)
-                else:
+                if block_size_ratio > 1:
                     kv_postprocess_blksize_on_receive(cache, indices, block_size_ratio)
 
     def post_process_device_kv_on_receive_heterogeneous_attn(
@@ -1741,9 +1686,7 @@ class NixlConnectorWorker:
             block_size_ratio = self.transfer_topo.block_size_ratio(
                 remote_info.remote_block_size
             )
-            if not self.use_mla and (
-                block_size_ratio > 1 or self.enable_permute_local_kv
-            ):
+            if not self.use_mla and block_size_ratio > 1:
                 assert not self._is_hma_required
                 block_ids_for_blocksize_post_process[block_size_ratio].append(
                     meta.local_physical_block_ids[0]

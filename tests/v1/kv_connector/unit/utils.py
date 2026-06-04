@@ -94,7 +94,6 @@ def create_vllm_config(
     block_size: int = 16,
     max_model_len: int = 10000,
     enable_chunked_prefill: bool = True,
-    enable_permute_local_kv: bool = False,
     kv_connector_extra_config: dict[str, Any] | None = None,
     dtype: str = "float16",
     cache_dtype: str = "auto",
@@ -133,7 +132,6 @@ def create_vllm_config(
         kv_connector=kv_connector,
         kv_connector_module_path=kv_connector_module_path,
         kv_role=kv_role,
-        enable_permute_local_kv=enable_permute_local_kv,
         kv_connector_extra_config=kv_connector_extra_config or {},
         kv_load_failure_policy=kv_load_failure_policy,
     )

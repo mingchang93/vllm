@@ -1005,63 +1005,6 @@ class TestNixlHandshake:
                 worker.add_remote_agent(meta, remote_tp_size=2)
                 worker.add_remote_agent(meta, remote_tp_size=1)
 
-    @patch(
-        "vllm.distributed.kv_transfer.kv_connector.v1.nixl.worker.NixlWrapper",
-        FakeNixlWrapper,
-    )
-    def test_handshake_succeed_on_kv_cache_layout_mismatch_with_experimental(
-        self, default_vllm_config, dist_init
-    ):
-        """
-        Verify that adding a remote agent fails if kv_cache_layout differs.
-        This test is only relevant for heterogeneous TP.
-        """
-        vllm_config = create_vllm_config(enable_permute_local_kv=True)
-
-        # Mock TP world size to 2 to force heterogeneous TP when
-        # remote_tp_size=1
-        with patch(
-            "vllm.distributed.kv_transfer.kv_connector.v1.nixl.worker.get_tensor_model_parallel_world_size",  # noqa: E501
-            return_value=2,
-        ):
-            # Initialize connector and worker (with fake NIXL wrapper)
-            connector = NixlConnector(
-                vllm_config, KVConnectorRole.WORKER, make_kv_cache_config(block_size=16)
-            )
-            connector.connector_worker = FakeNixlConnectorWorker(
-                vllm_config,
-                connector.engine_id,
-                hand_shake_latency=0,
-                kv_cache_layout="NHD",
-            )
-            worker = connector.connector_worker
-
-            # Minimal local registration params used by add_remote_agent
-            worker.slot_size_per_layer = [2048]
-            worker.block_len_per_layer = [2048 * worker.block_size]
-            worker.num_blocks = 1
-            worker.dst_num_blocks[worker.engine_id] = worker.num_blocks
-
-            # Metadata with different kv_cache_layout than local worker
-            meta = NixlAgentMetadata(
-                engine_id=FakeNixlConnectorWorker.REMOTE_ENGINE_ID,
-                agent_metadata=FakeNixlWrapper.AGENT_METADATA,
-                kv_caches_base_addr=[0],
-                device_id=0,
-                num_blocks=1,
-                # prefill TP=1, decode TP=2, remote block_lens is double to local
-                block_lens=[i * 2 for i in worker.block_len_per_layer],
-                kv_cache_layout="HND",
-                block_size=worker.block_size,
-                ssm_sizes=(0, 0),
-                attn_backend_name=worker.backend_name,
-                physical_blocks_per_logical_kv_block=1,
-            )
-
-            # We don't check layout for homogeneous TP and MLA for now, as the
-            # whole block is moved.
-            worker.add_remote_agent(meta, remote_tp_size=1)
-
 
 # NOTE: resource cleanup in mp backend is a bit finicky, so the order in which
 # we put here is important. First run ray, it will clean up the resources, then
@@ -2296,10 +2239,7 @@ def test_failed_request_skips_kv_postprocessing(
         "transfer_exception": "fail_transfer_exception",
     }
 
-    # Use enable_permute_local_kv=True so that
-    # post_process_device_kv_on_receive would be called on the success path,
-    # making the assertion meaningful (not trivially true).
-    vllm_config = create_vllm_config(enable_permute_local_kv=True)
+    vllm_config = create_vllm_config()
 
     connector = NixlConnector(
         vllm_config, KVConnectorRole.WORKER, make_kv_cache_config(block_size=16)
