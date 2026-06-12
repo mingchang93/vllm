@@ -12,6 +12,7 @@ import torch
 from vllm.multimodal.inputs import MultiModalFeatureSpec
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingParams
+from vllm.logger import init_logger
 from vllm.utils import length_from_prompt_token_ids_or_embeds
 from vllm.v1.engine import (
     EngineCoreEvent,
@@ -21,6 +22,8 @@ from vllm.v1.engine import (
 )
 from vllm.v1.structured_output.request import StructuredOutputRequest
 from vllm.v1.utils import ConstantList
+
+logger = init_logger(__name__)
 
 if TYPE_CHECKING:
     from vllm.lora.request import LoRARequest
@@ -118,6 +121,24 @@ class Request:
         # State
         # The number of tokens with prefix cache hits.
         self.num_cached_tokens = -1
+        # Snapshot of num_computed_tokens taken during the first prefill
+        # scheduling step, immutable once set. Used to overwrite
+        # num_cached_tokens in the final API response.
+        # In PD separation, the value is inherited from the P node
+        # via kv_transfer_params, so D node gets P's snapshot.
+        _p_snapshot = -1
+        if self.kv_transfer_params:
+            _p_snapshot = self.kv_transfer_params.get(
+                "num_prefill_computed_tokens", -1
+            )
+            logger.info(
+                "[vllm] Request %s initialized with "
+                "num_prefill_computed_tokens=%d "
+                "from kv_transfer_params",
+                request_id,
+                _p_snapshot,
+            )
+        self.num_prefill_computed_tokens = _p_snapshot
 
         # The number of NaNs in logits. A value greater than 0
         # indicates that the output is corrupted

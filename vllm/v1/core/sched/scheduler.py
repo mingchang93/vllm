@@ -510,6 +510,7 @@ class Scheduler(SchedulerInterface):
                     num_new_local_computed_tokens = 0
                     num_computed_tokens = request.num_computed_tokens
 
+
                 encoder_inputs_to_schedule = None
                 external_load_encoder_input = []
                 new_encoder_compute_budget = encoder_compute_budget
@@ -638,6 +639,20 @@ class Scheduler(SchedulerInterface):
                 token_budget -= num_new_tokens
                 request.status = RequestStatus.RUNNING
                 request.num_computed_tokens = num_computed_tokens
+                # Snapshot num_computed_tokens when request first enters
+                # RUNNING state. Placed after the load_kv_async check to
+                # avoid capturing a stale value before KV transfer completes.
+                if request.num_prefill_computed_tokens < 0:
+                    request.num_prefill_computed_tokens = num_computed_tokens
+                    logger.info(
+                        "[vllm] Snapshot num_prefill_computed_tokens "
+                        "for request %s: "
+                        "num_computed_tokens=%d (local=%d, external=%d)",
+                        request.request_id,
+                        num_computed_tokens,
+                        num_new_local_computed_tokens,
+                        num_external_computed_tokens,
+                    )
                 # Count the number of prefix cached tokens.
                 if request.num_cached_tokens < 0:
                     request.num_cached_tokens = num_computed_tokens
@@ -1188,7 +1203,11 @@ class Scheduler(SchedulerInterface):
                         events=request.take_events(),
                         kv_transfer_params=kv_transfer_params,
                         trace_headers=request.trace_headers,
-                        num_cached_tokens=request.num_cached_tokens,
+                        num_cached_tokens=(
+                            request.num_prefill_computed_tokens
+                            if request.num_prefill_computed_tokens >= 0
+                            else request.num_cached_tokens
+                        ),
                         num_nans_in_logits=request.num_nans_in_logits,
                     )
                 )
@@ -1214,7 +1233,11 @@ class Scheduler(SchedulerInterface):
                         finish_reason=request.get_finished_reason(),
                         events=request.take_events(),
                         trace_headers=request.trace_headers,
-                        num_cached_tokens=request.num_cached_tokens,
+                        num_cached_tokens=(
+                            request.num_prefill_computed_tokens
+                            if request.num_prefill_computed_tokens >= 0
+                            else request.num_cached_tokens
+                        ),
                     )
                 )
 
@@ -1398,6 +1421,18 @@ class Scheduler(SchedulerInterface):
         assert request.is_finished()
 
         delay_free_blocks, kv_xfer_params = self._connector_finished(request)
+        # Pass num_prefill_computed_tokens snapshot to D node via
+        # kv_transfer_params in PD separation.
+        if kv_xfer_params is not None and request.num_prefill_computed_tokens >= 0:
+            kv_xfer_params["num_prefill_computed_tokens"] = (
+                request.num_prefill_computed_tokens
+            )
+            logger.info(
+                "[vllm] Request %s passing num_prefill_computed_tokens=%d "
+                "via kv_transfer_params to D node",
+                request.request_id,
+                request.num_prefill_computed_tokens,
+            )
         self.encoder_cache_manager.free(request)
         request_id = request.request_id
         self.finished_req_ids.add(request_id)

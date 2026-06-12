@@ -1254,7 +1254,18 @@ class OpenAIServingChat(OpenAIServing):
                     completion_tokens=completion_tokens,
                     total_tokens=num_prompt_tokens + completion_tokens,
                 )
-                if self.enable_prompt_tokens_details and num_cached_tokens:
+                logger.info(
+                    "[vllm] Request %s prompt_tokens_details check: "
+                    "num_cached_tokens=%s (type=%s), "
+                    "condition=(%s is not None and %s >= 0)=%s",
+                    request_id,
+                    num_cached_tokens,
+                    type(num_cached_tokens).__name__,
+                    num_cached_tokens,
+                    num_cached_tokens,
+                    num_cached_tokens is not None and num_cached_tokens >= 0,
+                )
+                if self.enable_prompt_tokens_details and num_cached_tokens is not None and num_cached_tokens >= 0:
                     final_usage.prompt_tokens_details = PromptTokenUsageInfo(
                         cached_tokens=num_cached_tokens
                     )
@@ -1596,7 +1607,19 @@ class OpenAIServingChat(OpenAIServing):
             completion_tokens=num_generated_tokens,
             total_tokens=num_prompt_tokens + num_generated_tokens,
         )
-        if self.enable_prompt_tokens_details and final_res.num_cached_tokens:
+        if self.enable_prompt_tokens_details and final_res.num_cached_tokens is not None and final_res.num_cached_tokens >= 0:
+            logger.info(
+                "[vllm] Request %s prompt_tokens_details check: "
+                "num_cached_tokens=%s (type=%s), "
+                "condition=(%s is not None and %s >= 0)=%s",
+                request_id,
+                final_res.num_cached_tokens,
+                type(final_res.num_cached_tokens).__name__,
+                final_res.num_cached_tokens,
+                final_res.num_cached_tokens,
+                final_res.num_cached_tokens is not None
+                and final_res.num_cached_tokens >= 0,
+            )
             usage.prompt_tokens_details = PromptTokenUsageInfo(
                 cached_tokens=final_res.num_cached_tokens
             )

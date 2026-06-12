@@ -485,7 +485,18 @@ class OpenAIServingCompletion(OpenAIServing):
                 total_tokens=total_prompt_tokens + total_completion_tokens,
             )
 
-            if self.enable_prompt_tokens_details and num_cached_tokens:
+            logger.info(
+                "[vllm] Request %s prompt_tokens_details check: "
+                "num_cached_tokens=%s (type=%s), "
+                "condition=(%s is not None and %s >= 0)=%s",
+                request_id,
+                num_cached_tokens,
+                type(num_cached_tokens).__name__,
+                num_cached_tokens,
+                num_cached_tokens,
+                num_cached_tokens is not None and num_cached_tokens >= 0,
+            )
+            if self.enable_prompt_tokens_details and num_cached_tokens is not None and num_cached_tokens >= 0:
                 final_usage_info.prompt_tokens_details = PromptTokenUsageInfo(
                     cached_tokens=num_cached_tokens
                 )
@@ -609,14 +620,26 @@ class OpenAIServingCompletion(OpenAIServing):
             total_tokens=num_prompt_tokens + num_generated_tokens,
         )
 
-        if (
-            self.enable_prompt_tokens_details
-            and last_final_res
-            and last_final_res.num_cached_tokens
-        ):
-            usage.prompt_tokens_details = PromptTokenUsageInfo(
-                cached_tokens=last_final_res.num_cached_tokens
-            )
+        if self.enable_prompt_tokens_details and last_final_res:
+            if (
+                last_final_res.num_cached_tokens is not None
+                and last_final_res.num_cached_tokens >= 0
+            ):
+                logger.info(
+                    "[vllm] Request %s prompt_tokens_details check: "
+                    "num_cached_tokens=%s (type=%s), "
+                    "condition=(%s is not None and %s >= 0)=%s",
+                    request_id,
+                    last_final_res.num_cached_tokens,
+                    type(last_final_res.num_cached_tokens).__name__,
+                    last_final_res.num_cached_tokens,
+                    last_final_res.num_cached_tokens,
+                    last_final_res.num_cached_tokens is not None
+                    and last_final_res.num_cached_tokens >= 0,
+                )
+                usage.prompt_tokens_details = PromptTokenUsageInfo(
+                    cached_tokens=last_final_res.num_cached_tokens
+                )
 
         request_metadata.final_usage_info = usage
         if final_res_batch:
