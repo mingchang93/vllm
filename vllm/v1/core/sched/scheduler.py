@@ -661,6 +661,13 @@ class Scheduler(SchedulerInterface):
                             num_local_cached_tokens=num_new_local_computed_tokens,
                             num_external_cached_tokens=num_external_computed_tokens,
                         )
+                        # Persist for PD separation: store the total cached
+                        # token count so it survives take_prefill_stats()
+                        # and can be passed to the D node.
+                        request._prefill_cached_tokens = (
+                            num_new_local_computed_tokens
+                            + num_external_computed_tokens
+                        )
                 else:
                     # KVTransfer: WAITING reqs have num_computed_tokens > 0
                     # after async KV recvs are completed.
@@ -1892,6 +1899,24 @@ class Scheduler(SchedulerInterface):
 
         self._inflight_prefills.discard(request)
         connector_delay_free_blocks, kv_xfer_params = self._connector_finished(request)
+
+        # Pass the prefill cached token count to the D node in PD
+        # separation via kv_transfer_params.
+        if request._prefill_cached_tokens > 0:
+            if kv_xfer_params is None:
+                kv_xfer_params = {}
+            kv_xfer_params["num_cached_tokens"] = \
+                request._prefill_cached_tokens
+
+        # EC Connector: mirror the KV hook. The contract requires firing
+        # before the encoder cache is freed so the connector can inspect
+        # per-request state (e.g. which mm_hashes it recorded during
+        # save_caches()) and emit ec_transfer_params for the response body.
+        ec_xfer_params: dict[str, Any] | None = None
+        if self.ec_connector is not None:
+            ec_delay_free, ec_xfer_params = self.ec_connector.request_finished(request)
+            connector_delay_free_blocks |= ec_delay_free
+
         self.encoder_cache_manager.free(request)
         request_id = request.request_id
         self.finished_req_ids.add(request_id)

@@ -170,7 +170,25 @@ class Request:
         # The number of times this request has been preempted by the scheduler.
         self.num_preemptions = 0
 
+        # Persist the number of prefill cached tokens across
+        # take_prefill_stats(). Used in PD separation to pass the
+        # cached token count from the P node to the D node.
+        self._prefill_cached_tokens: int = 0
+
         self.prefill_stats: PrefillStats | None = PrefillStats()
+
+        # PD separation: inherit num_cached_tokens from the P node
+        # via kv_transfer_params when running on the D node.
+        if self.kv_transfer_params and "num_cached_tokens" \
+                in self.kv_transfer_params:
+            nc = self.kv_transfer_params["num_cached_tokens"]
+            self._prefill_cached_tokens = nc
+            if self.prefill_stats is not None:
+                self.prefill_stats.set(
+                    num_prompt_tokens=self.num_prompt_tokens,
+                    num_local_cached_tokens=nc,
+                    num_external_cached_tokens=0,
+                )
 
         self.block_hashes: list[BlockHash] = []
         # Store the block hasher without binding self to avoid creating a
