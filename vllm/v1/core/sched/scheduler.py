@@ -661,6 +661,24 @@ class Scheduler(SchedulerInterface):
                             num_local_cached_tokens=num_new_local_computed_tokens,
                             num_external_cached_tokens=num_external_computed_tokens,
                         )
+                        # Persist for PD separation: store the total cached
+                        # token count as a snapshot so it survives
+                        # take_prefill_stats() and can be passed to the
+                        # D node. Only set when not inherited from P node.
+                        if request.num_prefill_computed_tokens < 0:
+                            request.num_prefill_computed_tokens = (
+                                num_new_local_computed_tokens
+                                + num_external_computed_tokens
+                            )
+                            logger.info(
+                                "[vllm] Request %s captured "
+                                "num_prefill_computed_tokens=%d "
+                                "(local=%d, external=%d)",
+                                request.request_id,
+                                request.num_prefill_computed_tokens,
+                                num_new_local_computed_tokens,
+                                num_external_computed_tokens,
+                            )
                 else:
                     # KVTransfer: WAITING reqs have num_computed_tokens > 0
                     # after async KV recvs are completed.
@@ -844,6 +862,19 @@ class Scheduler(SchedulerInterface):
                 token_budget -= num_new_tokens
                 request.status = RequestStatus.RUNNING
                 request.num_computed_tokens = num_computed_tokens
+                # Snapshot num_computed_tokens when request first enters
+                # RUNNING state.
+                if request.num_prefill_computed_tokens < 0:
+                    request.num_prefill_computed_tokens = num_computed_tokens
+                    logger.info(
+                        "[vllm] Request %s snapshot "
+                        "num_prefill_computed_tokens=%d "
+                        "(local=%d, external=%d)",
+                        request.request_id,
+                        num_computed_tokens,
+                        num_new_local_computed_tokens,
+                        num_external_computed_tokens,
+                    )
                 # Only track requests that will still be prefilling after this chunk.
                 if num_computed_tokens + num_new_tokens < request.num_tokens:
                     self._inflight_prefills.add(request)
@@ -1549,6 +1580,23 @@ class Scheduler(SchedulerInterface):
                 or kv_transfer_params
                 or stopped
             ):
+                # Override prefill_stats.num_cached_tokens with the
+                # num_prefill_computed_tokens snapshot (which is captured
+                # once when the request first enters RUNNING state and is
+                # immutable thereafter).
+                _prefill_stats = request.take_prefill_stats()
+                if (_prefill_stats is not None
+                        and request.num_prefill_computed_tokens >= 0):
+                    _prefill_stats.num_cached_tokens = (
+                        request.num_prefill_computed_tokens
+                    )
+                    logger.info(
+                        "[vllm] Request %s overwrote "
+                        "prefill_stats.num_cached_tokens=%d "
+                        "from snapshot",
+                        request.request_id,
+                        request.num_prefill_computed_tokens,
+                    )
                 # Add EngineCoreOutput for this Request.
                 outputs[request.client_index].append(
                     EngineCoreOutput(
@@ -1560,7 +1608,7 @@ class Scheduler(SchedulerInterface):
                         pooling_output=pooler_output,
                         stop_reason=request.stop_reason,
                         events=request.take_events(),
-                        prefill_stats=request.take_prefill_stats(),
+                        prefill_stats=_prefill_stats,
                         kv_transfer_params=kv_transfer_params,
                         trace_headers=request.trace_headers,
                         routed_experts=routed_experts,
@@ -1892,6 +1940,21 @@ class Scheduler(SchedulerInterface):
 
         self._inflight_prefills.discard(request)
         connector_delay_free_blocks, kv_xfer_params = self._connector_finished(request)
+# Pass the prefill cached token count to the D node in PD
+        # separation via kv_transfer_params. Uses the immutable snapshot
+        # captured when the request first entered RUNNING state.
+        if (request.num_prefill_computed_tokens >= 0
+                and kv_xfer_params is not None):
+            kv_xfer_params["num_prefill_computed_tokens"] = \
+                request.num_prefill_computed_tokens
+            logger.info(
+                "[vllm] Request %s passed "
+                "num_prefill_computed_tokens=%d "
+                "to D node via kv_transfer_params",
+                request.request_id,
+                request.num_prefill_computed_tokens,
+            )
+
         self.encoder_cache_manager.free(request)
         request_id = request.request_id
         self.finished_req_ids.add(request_id)

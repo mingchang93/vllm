@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
+from vllm.logger import init_logger
 from vllm.multimodal.inputs import MultiModalFeatureSpec
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingParams
@@ -27,6 +28,9 @@ from vllm.v1.utils import ConstantList
 if TYPE_CHECKING:
     from vllm.lora.request import LoRARequest
     from vllm.v1.core.kv_cache_utils import BlockHash
+
+
+logger = init_logger(__name__)
 
 
 @dataclass
@@ -170,7 +174,37 @@ class Request:
         # The number of times this request has been preempted by the scheduler.
         self.num_preemptions = 0
 
+        # Snapshot of num_computed_tokens taken when the request first
+        # enters RUNNING state. Immutable once set. Overrides
+        # prefill_stats.num_cached_tokens in the API response.
+        # In PD separation, inherited from the P node via
+        # kv_transfer_params.
+        _p_snapshot = -1
+        if self.kv_transfer_params:
+            _p_snapshot = self.kv_transfer_params.get(
+                "num_prefill_computed_tokens", -1
+            )
+        self.num_prefill_computed_tokens = _p_snapshot
+
         self.prefill_stats: PrefillStats | None = PrefillStats()
+
+        # PD separation: inherit the P node's cached token count and
+        # pre-populate prefill_stats so the D node reports it.
+        if self.kv_transfer_params and "num_prefill_computed_tokens" \
+                in self.kv_transfer_params:
+            nc = self.kv_transfer_params["num_prefill_computed_tokens"]
+            self.num_prefill_computed_tokens = nc
+            logger.info(
+                "[vllm] Request %s inherited num_prefill_computed_tokens=%d "
+                "from P node via kv_transfer_params",
+                request_id, nc,
+            )
+            if self.prefill_stats is not None:
+                self.prefill_stats.set(
+                    num_prompt_tokens=self.num_prompt_tokens,
+                    num_local_cached_tokens=nc,
+                    num_external_cached_tokens=0,
+                )
 
         self.block_hashes: list[BlockHash] = []
         # Store the block hasher without binding self to avoid creating a

@@ -66,6 +66,12 @@ async def create_chat_completion(request: ChatCompletionRequest, raw_request: Re
         )
 
     elif isinstance(generator, ChatCompletionResponse):
+        logger.info(
+            "[vllm] API router: usage.prompt_tokens_details=%s, "
+            "serialized_usage=%s",
+            generator.usage.prompt_tokens_details,
+            generator.usage.model_dump(),
+        )
         return JSONResponse(
             content=generator.model_dump(),
             headers=metrics_header(metrics_header_format),

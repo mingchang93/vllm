@@ -881,9 +881,15 @@ class OpenAIServingChat(OpenAIServing):
                     completion_tokens=completion_tokens,
                     total_tokens=num_prompt_tokens + completion_tokens,
                 )
-                if self.enable_prompt_tokens_details and num_cached_tokens:
+                if self.enable_prompt_tokens_details and num_cached_tokens is not None and num_cached_tokens >= 0:
                     final_usage.prompt_tokens_details = PromptTokenUsageInfo(
                         cached_tokens=num_cached_tokens
+                    )
+                    logger.info(
+                        "[vllm] Request %s prompt_tokens_details set: "
+                        "cached_tokens=%d (streaming)",
+                        request_id,
+                        num_cached_tokens,
                     )
 
                 final_usage_chunk = ChatCompletionStreamResponse(
@@ -1305,9 +1311,15 @@ class OpenAIServingChat(OpenAIServing):
             completion_tokens=num_generated_tokens,
             total_tokens=num_prompt_tokens + num_generated_tokens,
         )
-        if self.enable_prompt_tokens_details and final_res.num_cached_tokens:
+        if self.enable_prompt_tokens_details and final_res.num_cached_tokens is not None and final_res.num_cached_tokens >= 0:
             usage.prompt_tokens_details = PromptTokenUsageInfo(
                 cached_tokens=final_res.num_cached_tokens
+            )
+            logger.info(
+                "[vllm] Request %s prompt_tokens_details set: "
+                "cached_tokens=%d",
+                request_id,
+                final_res.num_cached_tokens,
             )
 
         request_metadata.final_usage_info = usage
@@ -1328,6 +1340,17 @@ class OpenAIServingChat(OpenAIServing):
             ),
             prompt_text=prompt_text,
             kv_transfer_params=final_res.kv_transfer_params,
+        )
+
+        logger.info(
+            "[vllm] Request %s response built: "
+            "num_cached_tokens=%s, "
+            "usage.prompt_tokens_details=%s, "
+            "serialized_usage=%s",
+            request_id,
+            final_res.num_cached_tokens,
+            usage.prompt_tokens_details,
+            usage.model_dump(),
         )
 
         # Log complete response if output logging is enabled
